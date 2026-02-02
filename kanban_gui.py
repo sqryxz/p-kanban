@@ -202,13 +202,36 @@ st.markdown("""
         padding: 4px;
     }
     
-    /* Fix sidebar toggle icon */
-    button[data-testid="baseButton-header"] {
-        color: #666 !important;
+    /* Fix sidebar toggle icon - hide text and show proper icon */
+    /* Multiple selector strategies for different Streamlit versions */
+    button[data-testid="baseButton-header"],
+    button[kind="header"],
+    section[data-testid="stSidebar"] button[data-testid="stBaseButton-header"],
+    section[data-testid="stSidebar"] button[data-testid="baseButton-header"] {
+        font-size: 0 !important;
+        color: transparent !important;
+        position: relative !important;
     }
     
-    button[data-testid="baseButton-header"] svg {
-        fill: #666 !important;
+    button[data-testid="baseButton-header"]::before,
+    button[kind="header"]::before,
+    section[data-testid="stSidebar"] button[data-testid="stBaseButton-header"]::before,
+    section[data-testid="stSidebar"] button[data-testid="baseButton-header"]::before {
+        content: "☰";
+        font-size: 16px !important;
+        color: #666 !important;
+        position: absolute !important;
+        left: 50% !important;
+        top: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        visibility: visible !important;
+        display: block !important;
+    }
+    
+    /* Hide any text/span inside the button */
+    button[data-testid="baseButton-header"] span,
+    button[kind="header"] span {
+        display: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -290,14 +313,16 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
         
         # Show move menu if this task is selected
         if st.session_state.show_move_menu == task.id:
-            st.markdown("<div style='margin:4px 0;font-size:0.65rem;color:#666'>move to:</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin:4px 0 2px 0;font-size:0.65rem;color:#666'>move to:</div>", unsafe_allow_html=True)
             other_cols = [c for c in board.columns if c.id != task.column_id]
-            move_cols = st.columns(len(other_cols))
+            # Use more columns for tighter layout
+            move_cols = st.columns(len(other_cols) * 2)
             for idx, col_dest in enumerate(other_cols):
-                with move_cols[idx]:
-                    # Use full lowercase column name
-                    col_label = col_dest.name.lower().replace(" ", "")
-                    if st.button(col_label, key=f"to_{task.id}_{col_dest.id}"):
+                with move_cols[idx * 2]:
+                    # Use abbreviated column names for compact display
+                    col_name = col_dest.name.lower().replace(" ", "")
+                    col_label = col_name[:3] if len(col_name) > 5 else col_name
+                    if st.button(col_label, key=f"to_{task.id}_{col_dest.id}", use_container_width=True):
                         ok, err = board.can_add_to_column(col_dest.id)
                         if ok:
                             task.move_to(col_dest.id)
@@ -430,18 +455,31 @@ def render_task_detail(task: Task, board: Board, data: KanbanData):
         st.rerun()
 
 def ensure_five_columns(board: Board):
-    """Ensure board has all 5 columns, add missing ones"""
-    expected_columns = [
-        ("backlog", "Backlog", 0),
-        ("todo", "To Do", 1),
-        ("inprogress", "In Progress", 2),
-        ("testing", "Testing", 3),
-        ("done", "Done", 4),
-    ]
+    """Ensure board has all 5 columns with correct order"""
+    expected_columns = {
+        "backlog": ("Backlog", 0),
+        "todo": ("To Do", 1),
+        "inprogress": ("In Progress", 2),
+        "testing": ("Testing", 3),
+        "done": ("Done", 4),
+    }
     
     existing_ids = {c.id for c in board.columns}
+    changed = False
     
-    for col_id, col_name, order in expected_columns:
+    # Update existing columns to have correct order
+    for col in board.columns:
+        if col.id in expected_columns:
+            correct_name, correct_order = expected_columns[col.id]
+            if col.order != correct_order:
+                col.order = correct_order
+                changed = True
+            if col.name != correct_name:
+                col.name = correct_name
+                changed = True
+    
+    # Add missing columns
+    for col_id, (col_name, order) in expected_columns.items():
         if col_id not in existing_ids:
             board.columns.append(Column(
                 id=col_id,
@@ -449,9 +487,12 @@ def ensure_five_columns(board: Board):
                 limit=3 if col_id == "inprogress" else None,
                 order=order
             ))
+            changed = True
     
     # Sort by order
     board.columns.sort(key=lambda x: x.order)
+    
+    return changed
 
 def main():
     data = load_data()
@@ -461,10 +502,8 @@ def main():
         st.error("no board found")
         return
     
-    # Ensure board has all 5 columns and save if changed
-    original_col_count = len(board.columns)
-    ensure_five_columns(board)
-    if len(board.columns) != original_col_count:
+    # Ensure board has all 5 columns with correct order, save if changed
+    if ensure_five_columns(board):
         save_data(data)
     
     # Update board name for this session

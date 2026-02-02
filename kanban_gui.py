@@ -256,6 +256,10 @@ if 'show_edit' not in st.session_state:
     st.session_state.show_edit = False
 if 'editing_task_id' not in st.session_state:
     st.session_state.editing_task_id = None
+if 'current_board_id' not in st.session_state:
+    st.session_state.current_board_id = None
+if 'show_create_board' not in st.session_state:
+    st.session_state.show_create_board = False
 if 'selected_column' not in st.session_state:
     st.session_state.selected_column = 'backlog'
 if 'viewing_task' not in st.session_state:
@@ -432,6 +436,46 @@ def render_edit_form(task: Task, board: Board, data: KanbanData):
             st.session_state.editing_task_id = None
             st.rerun()
 
+def render_create_board_form(data: KanbanData):
+    """Render form to create a new board"""
+    with st.form("create_board"):
+        st.markdown("**create new board**")
+        
+        name = st.text_input("board name", placeholder="my project...", label_visibility="collapsed")
+        
+        c_create, c_cancel = st.columns(2)
+        with c_create:
+            submitted = st.form_submit_button("✓ create", use_container_width=True)
+        with c_cancel:
+            cancelled = st.form_submit_button("✕ cancel", use_container_width=True)
+        
+        if submitted and name:
+            # Generate unique board ID
+            base_id = name.lower().replace(" ", "-")[:20]
+            board_id = base_id
+            counter = 1
+            while any(b.id == board_id for b in data.boards):
+                board_id = f"{base_id}-{counter}"
+                counter += 1
+            
+            from models import DEFAULT_COLUMNS
+            new_board = Board(
+                id=board_id,
+                name=name,
+                columns=DEFAULT_COLUMNS.copy()
+            )
+            data.boards.append(new_board)
+            data.default_board = board_id
+            save_data(data)
+            
+            st.session_state.current_board_id = board_id
+            st.session_state.show_create_board = False
+            st.rerun()
+        
+        if cancelled:
+            st.session_state.show_create_board = False
+            st.rerun()
+
 def render_task_detail(task: Task, board: Board, data: KanbanData):
     st.markdown(f"### #{task.id}")
     st.markdown(f"**{task.title}**")
@@ -496,7 +540,10 @@ def ensure_five_columns(board: Board):
 
 def main():
     data = load_data()
-    board = data.get_board()
+    
+    # Get current board (from session state or default)
+    current_board_id = st.session_state.current_board_id or data.default_board
+    board = data.get_board(current_board_id)
     
     if not board:
         st.error("no board found")
@@ -539,6 +586,13 @@ def main():
         render_add_form(board, data)
         st.markdown("---")
     
+    # Handle create new board
+    if st.session_state.show_create_board:
+        st.markdown("---")
+        render_create_board_form(data)
+        st.markdown("---")
+        return
+    
     # Header actions
     if not st.session_state.show_add and not st.session_state.show_edit:
         c1, c2, c3 = st.columns([1, 4, 1])
@@ -553,11 +607,47 @@ def main():
     
     # Sidebar filters
     with st.sidebar:
+        # Board selector (only show if multiple boards exist)
+        if len(data.boards) > 1:
+            st.markdown("**board**")
+            board_options = [(b.name, b.id) for b in data.boards]
+            # Determine which board to select
+            current_id = st.session_state.current_board_id or data.default_board
+            current_idx = next((i for i, (_, bid) in enumerate(board_options) if bid == current_id), 0)
+            
+            selected_board = st.selectbox(
+                "select board",
+                options=board_options,
+                format_func=lambda x: x[0],
+                index=current_idx,
+                label_visibility="collapsed"
+            )
+            
+            # Update current board if changed
+            if selected_board[1] != st.session_state.current_board_id:
+                st.session_state.current_board_id = selected_board[1]
+                # Clear viewing/editing states when switching boards
+                st.session_state.viewing_task = None
+                st.session_state.show_edit = False
+                st.session_state.editing_task_id = None
+                st.session_state.show_add = False
+                st.rerun()
+            
+            st.markdown("---")
+        
         st.markdown("**stats**")
         for col in sorted(board.columns, key=lambda x: x.order):
             count = len(board.get_tasks_in_column(col.id))
             limit = f"/{col.limit}" if col.limit else ""
             st.markdown(f"<div style='font-size:0.7rem;color:#666'>{col.name.lower()}: <span style='color:#888'>{count}{limit}</span></div>", unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Board management
+        st.markdown("**boards**")
+        if st.button("+ new board", use_container_width=True):
+            st.session_state.show_create_board = True
+            st.rerun()
         
         st.markdown("---")
         st.markdown("**filters**")

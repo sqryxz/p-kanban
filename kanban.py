@@ -47,11 +47,12 @@ def add(
     description: Optional[str] = typer.Option(None, "--description", "-d", help="Task description"),
     priority: Priority = typer.Option(Priority.MEDIUM, "--priority", "-p", help="Task priority"),
     tags: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Task tags (can be used multiple times)"),
-    column: str = typer.Option("todo", "--column", "-c", help="Initial column (default: todo)")
+    column: str = typer.Option("todo", "--column", "-c", help="Initial column (default: todo)"),
+    board_id: Optional[str] = typer.Option(None, "--board", "-b", help="Board ID (uses default if not specified)")
 ):
     """Add a new task to the board"""
     data = get_data()
-    board = data.get_board()
+    board = data.get_board(board_id)
     
     if not board:
         console.print("[red]Error: No board found[/red]")
@@ -82,11 +83,12 @@ def add(
 def move(
     task_id: int = typer.Argument(..., help="Task ID to move"),
     column: str = typer.Argument(..., help="Target column"),
-    reason: Optional[str] = typer.Option(None, "--reason", "-r", help="Reason for moving")
+    reason: Optional[str] = typer.Option(None, "--reason", "-r", help="Reason for moving"),
+    board_id: Optional[str] = typer.Option(None, "--board", "-b", help="Board ID (uses default if not specified)")
 ):
     """Move a task to a different column"""
     data = get_data()
-    board = data.get_board()
+    board = data.get_board(board_id)
     
     if not board:
         console.print("[red]Error: No board found[/red]")
@@ -116,17 +118,18 @@ def move(
 @app.command()
 def delete(
     task_id: int = typer.Argument(..., help="Task ID to delete"),
-    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation")
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    board_id: Optional[str] = typer.Option(None, "--board", "-b", help="Board ID (uses default if not specified)")
 ):
     """Delete a task from the board"""
     data = get_data()
-    board = data.get_board()
+    board = data.get_board(board_id)
     
     if not board:
         console.print("[red]Error: No board found[/red]")
         sys.exit(1)
     
-    task = data.get_task(task_id)
+    task = data.get_task(task_id, board_id)
     if not task:
         console.print(f"[red]Error: Task #{task_id} not found[/red]")
         sys.exit(1)
@@ -391,6 +394,119 @@ def backup(
     storage = get_storage()
     backup_path = storage.backup(output)
     console.print(f"[green]Backup created: {backup_path}[/green]")
+
+
+@app.command()
+def create_board(
+    name: str = typer.Argument(..., help="Board name"),
+    set_default: bool = typer.Option(True, "--default/--no-default", help="Set as default board")
+):
+    """Create a new Kanban board"""
+    data = get_data()
+    
+    # Generate unique board ID
+    base_id = name.lower().replace(" ", "-")[:20]
+    board_id = base_id
+    counter = 1
+    while any(b.id == board_id for b in data.boards):
+        board_id = f"{base_id}-{counter}"
+        counter += 1
+    
+    new_board = Board(
+        id=board_id,
+        name=name,
+        columns=DEFAULT_COLUMNS.copy()
+    )
+    data.boards.append(new_board)
+    
+    if set_default or len(data.boards) == 1:
+        data.default_board = board_id
+    
+    save_data(data)
+    console.print(f"[green]Created board: {name} ({board_id})[/green]")
+    if set_default:
+        console.print(f"[dim]Set as default board[/dim]")
+
+
+@app.command()
+def list_boards(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON")
+):
+    """List all Kanban boards"""
+    data = get_data()
+    
+    if json_output:
+        output = {
+            "boards": [b.model_dump(mode='json') for b in data.boards],
+            "default_board": data.default_board
+        }
+        print(json.dumps(output, indent=2))
+        return
+    
+    table = Table(title="📋 Boards", box=box.ROUNDED)
+    table.add_column("ID", style="dim")
+    table.add_column("Name")
+    table.add_column("Tasks", justify="right")
+    table.add_column("Default", justify="center")
+    
+    for board in data.boards:
+        is_default = "✓" if board.id == data.default_board else ""
+        task_count = len(board.tasks)
+        table.add_row(board.id, board.name, str(task_count), is_default)
+    
+    console.print(table)
+
+
+@app.command()
+def switch_board(
+    board_id: str = typer.Argument(..., help="Board ID to switch to")
+):
+    """Set the default board"""
+    data = get_data()
+    
+    board = data.get_board(board_id)
+    if not board:
+        console.print(f"[red]Error: Board '{board_id}' not found[/red]")
+        sys.exit(1)
+    
+    data.default_board = board_id
+    save_data(data)
+    console.print(f"[green]Switched to board: {board.name} ({board_id})[/green]")
+
+
+@app.command()
+def delete_board(
+    board_id: str = typer.Argument(..., help="Board ID to delete"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation")
+):
+    """Delete a Kanban board and all its tasks"""
+    data = get_data()
+    
+    board = data.get_board(board_id)
+    if not board:
+        console.print(f"[red]Error: Board '{board_id}' not found[/red]")
+        sys.exit(1)
+    
+    if len(data.boards) <= 1:
+        console.print("[red]Error: Cannot delete the only board. Create another board first.[/red]")
+        sys.exit(1)
+    
+    if not force:
+        task_count = len(board.tasks)
+        warning = f" with {task_count} tasks" if task_count > 0 else ""
+        confirm = typer.confirm(f"Delete board '{board.name}'{warning}? This cannot be undone.")
+        if not confirm:
+            console.print("Cancelled")
+            return
+    
+    data.boards = [b for b in data.boards if b.id != board_id]
+    
+    # If we deleted the default board, set a new default
+    if data.default_board == board_id and data.boards:
+        data.default_board = data.boards[0].id
+    
+    save_data(data)
+    console.print(f"[green]Deleted board: {board.name} ({board_id})[/green]")
 
 
 @app.callback()

@@ -7,15 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-02-02
+
 ### Added
-- Drag-and-drop support for moving tasks between columns in GUI
-- Visual hover effects and improved card styling
-- Streamlit-sortables dependency for enhanced drag-and-drop functionality
+- Full dark theme UI with GitHub-inspired color scheme (#0d1117 background)
+- Working HTML5 drag-and-drop for task cards with visual feedback
+- Empty column state with clickable "Add task" button
+- Inline task creation form (moved from sidebar to main view)
+- Collapsible sidebar (defaults to collapsed)
+- Visual drag handles (⋮⋮) on task cards
+- Hover animations and lift effects on task cards
+- Improved button styling with shadows and hover effects
 
 ### Changed
-- Improved column header styling with gradient background and white text for better readability
-- Enhanced task card design with better contrast and visual hierarchy
-- Updated priority badges with proper color contrast
+- Complete UI redesign with dark theme
+- Column headers now use gradient styling with improved contrast
+- Moved "Add New Task" button to main header area
+- Task form now appears inline when triggered
+- Empty columns show 📭 icon and clickable add button
+- Priority badges with border accents for better visibility
+- Stats cards in sidebar with visual separation
+- Improved typography with better hierarchy
+
+### Fixed
+- Header text now readable with proper contrast on dark background
+- Title "📋 AI Development" now displays correctly with blue accent color
+- Task cards have proper dark background with light text
 
 ## [1.1.0] - 2025-02-02
 

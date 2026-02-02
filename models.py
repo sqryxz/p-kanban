@@ -134,7 +134,9 @@ class KanbanData(BaseModel):
 
 
 DEFAULT_COLUMNS = [
-    Column(id="todo", name="To Do", limit=None, order=0),
-    Column(id="inprogress", name="In Progress", limit=3, order=1),
-    Column(id="done", name="Done", limit=None, order=2),
+    Column(id="backlog", name="Backlog", limit=None, order=0),
+    Column(id="todo", name="To Do", limit=None, order=1),
+    Column(id="inprogress", name="In Progress", limit=3, order=2),
+    Column(id="testing", name="Testing", limit=None, order=3),
+    Column(id="done", name="Done", limit=None, order=4),
 ]

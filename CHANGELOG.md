@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2025-02-02
+
+### Added
+- Five-column layout: Backlog, To Do, In Progress, Testing, Done
+- Working task movement via dropdown selector ("→ move")
+- Minimal sleek dark theme with reduced font sizes
+- Color-coded column headers (backlog=gray, todo=silver, in-progress=orange, testing=blue, done=green)
+- Compact task cards with left-border priority indicators
+- Hover effects on task cards and buttons
+- Simplified button labels ("view", "del", "+ new task")
+- Agent context indicator (◉) on tasks with AI context
+
+### Changed
+- Title changed to "pODV - progress tracker" with ◼ icon
+- Complete visual redesign for minimal aesthetic
+- Smaller fonts throughout (0.7rem - 0.8rem for most text)
+- Moved to Inter font family
+- Simplified color palette (mostly grays with accent colors)
+- Replaced drag-and-drop with reliable dropdown movement
+- More compact spacing and tighter layout
+- Simplified sidebar with just search and tag filters
+
+### Removed
+- Complex drag-and-drop implementation (replaced with dropdown)
+- Large visual elements and excessive padding
+- Gradient backgrounds (replaced with flat minimal design)
+
 ## [1.2.0] - 2025-02-02
 
 ### Added

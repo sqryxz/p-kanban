@@ -201,6 +201,15 @@ st.markdown("""
         min-height: 60vh;
         padding: 4px;
     }
+    
+    /* Fix sidebar toggle icon */
+    button[data-testid="baseButton-header"] {
+        color: #666 !important;
+    }
+    
+    button[data-testid="baseButton-header"] svg {
+        fill: #666 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -286,7 +295,9 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
             move_cols = st.columns(len(other_cols))
             for idx, col_dest in enumerate(other_cols):
                 with move_cols[idx]:
-                    if st.button(col_dest.name.lower()[:3], key=f"to_{task.id}_{col_dest.id}"):
+                    # Use full lowercase column name
+                    col_label = col_dest.name.lower().replace(" ", "")
+                    if st.button(col_label, key=f"to_{task.id}_{col_dest.id}"):
                         ok, err = board.can_add_to_column(col_dest.id)
                         if ok:
                             task.move_to(col_dest.id)
@@ -418,6 +429,30 @@ def render_task_detail(task: Task, board: Board, data: KanbanData):
         del st.session_state.viewing_task
         st.rerun()
 
+def ensure_five_columns(board: Board):
+    """Ensure board has all 5 columns, add missing ones"""
+    expected_columns = [
+        ("backlog", "Backlog", 0),
+        ("todo", "To Do", 1),
+        ("inprogress", "In Progress", 2),
+        ("testing", "Testing", 3),
+        ("done", "Done", 4),
+    ]
+    
+    existing_ids = {c.id for c in board.columns}
+    
+    for col_id, col_name, order in expected_columns:
+        if col_id not in existing_ids:
+            board.columns.append(Column(
+                id=col_id,
+                name=col_name,
+                limit=3 if col_id == "inprogress" else None,
+                order=order
+            ))
+    
+    # Sort by order
+    board.columns.sort(key=lambda x: x.order)
+
 def main():
     data = load_data()
     board = data.get_board()
@@ -425,6 +460,12 @@ def main():
     if not board:
         st.error("no board found")
         return
+    
+    # Ensure board has all 5 columns and save if changed
+    original_col_count = len(board.columns)
+    ensure_five_columns(board)
+    if len(board.columns) != original_col_count:
+        save_data(data)
     
     # Update board name for this session
     board.name = "pODV - progress tracker"

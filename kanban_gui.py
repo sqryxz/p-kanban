@@ -4,7 +4,8 @@ Kanban GUI - Streamlit web interface for the Kanban board
 
 import streamlit as st
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
+import json
 
 from models import KanbanData, Board, Task, Column, Priority, now_utc
 from storage import KanbanStorage
@@ -17,34 +18,66 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS for better styling with proper contrast
 st.markdown("""
 <style>
+    /* Main app background */
+    .stApp {
+        background-color: #f5f5f5;
+    }
+    
+    /* Task card styling */
     .task-card {
-        background-color: #f8f9fa;
+        background-color: #ffffff;
         border-radius: 8px;
         padding: 12px;
         margin: 8px 0;
         border-left: 4px solid #dee2e6;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        cursor: grab;
+        transition: all 0.2s ease;
     }
     .task-card:hover {
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+    }
+    .task-card:active {
+        cursor: grabbing;
     }
     .priority-low { border-left-color: #6c757d; }
     .priority-medium { border-left-color: #007bff; }
     .priority-high { border-left-color: #fd7e14; }
     .priority-critical { border-left-color: #dc3545; }
     
+    /* Column header with dark text for readability */
     .column-header {
-        background-color: #e9ecef;
-        padding: 12px;
-        border-radius: 8px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: #ffffff !important;
+        padding: 16px;
+        border-radius: 12px;
         text-align: center;
         font-weight: bold;
+        font-size: 1.2rem;
         margin-bottom: 16px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
     
+    /* Column container */
+    .column-container {
+        background-color: #e8eaf6;
+        border-radius: 12px;
+        padding: 16px;
+        min-height: 400px;
+        border: 2px dashed transparent;
+        transition: all 0.3s ease;
+    }
+    .column-container.drag-over {
+        border-color: #667eea;
+        background-color: #c5cae9;
+    }
+    
+    /* Tag badge */
     .tag-badge {
         display: inline-block;
         background-color: #e3f2fd;
@@ -53,8 +86,10 @@ st.markdown("""
         border-radius: 12px;
         font-size: 0.75rem;
         margin: 2px;
+        font-weight: 500;
     }
     
+    /* Agent context badge */
     .agent-context-badge {
         display: inline-block;
         background-color: #fff3e0;
@@ -63,16 +98,134 @@ st.markdown("""
         border-radius: 12px;
         font-size: 0.75rem;
         margin-top: 4px;
+        font-weight: 500;
     }
     
+    /* Priority badge */
+    .priority-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    /* Drag handle */
+    .drag-handle {
+        cursor: grab;
+        color: #999;
+        float: right;
+        padding: 4px;
+    }
+    .drag-handle:hover {
+        color: #667eea;
+    }
+    
+    /* Button styling */
     .stButton button {
         width: 100%;
+        border-radius: 6px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+    
+    /* Form styling */
+    div[data-testid="stForm"] {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    /* WIP limit warning */
+    .wip-warning {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 8px 12px;
+        border-radius: 6px;
+        border-left: 4px solid #ffc107;
+        font-size: 0.9rem;
+        margin-bottom: 12px;
+    }
+    
+    /* Empty column state */
+    .empty-column {
+        text-align: center;
+        color: #9e9e9e;
+        padding: 40px 20px;
+        border: 2px dashed #c5cae9;
+        border-radius: 8px;
+        font-style: italic;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# JavaScript for drag-and-drop functionality
+st.markdown("""
+<script>
+// Drag and drop functionality
+let draggedElement = null;
 
-@st.cache_data(ttl=1)
+function initDragAndDrop() {
+    const cards = document.querySelectorAll('.task-card');
+    const columns = document.querySelectorAll('.column-container');
+    
+    cards.forEach(card => {
+        card.draggable = true;
+        
+        card.addEventListener('dragstart', (e) => {
+            draggedElement = card;
+            card.style.opacity = '0.5';
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', card.innerHTML);
+        });
+        
+        card.addEventListener('dragend', () => {
+            card.style.opacity = '1';
+            draggedElement = null;
+            columns.forEach(col => col.classList.remove('drag-over'));
+        });
+    });
+    
+    columns.forEach(column => {
+        column.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            column.classList.add('drag-over');
+        });
+        
+        column.addEventListener('dragleave', () => {
+            column.classList.remove('drag-over');
+        });
+        
+        column.addEventListener('drop', (e) => {
+            e.preventDefault();
+            column.classList.remove('drag-over');
+            
+            if (draggedElement) {
+                const taskId = draggedElement.getAttribute('data-task-id');
+                const targetColumn = column.getAttribute('data-column-id');
+                
+                // Send to Streamlit
+                window.parent.postMessage({
+                    type: 'kanban-move',
+                    taskId: taskId,
+                    targetColumn: targetColumn
+                }, '*');
+            }
+        });
+    });
+}
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', initDragAndDrop);
+// Re-initialize on Streamlit re-render
+setInterval(initDragAndDrop, 1000);
+</script>
+""", unsafe_allow_html=True)
+
+
 def load_data() -> KanbanData:
     """Load kanban data from storage"""
     storage = KanbanStorage()
@@ -83,7 +236,6 @@ def save_data(data: KanbanData):
     """Save kanban data to storage"""
     storage = KanbanStorage()
     storage.save(data)
-    st.cache_data.clear()
 
 
 def get_priority_class(priority: Priority) -> str:
@@ -91,91 +243,122 @@ def get_priority_class(priority: Priority) -> str:
     return f"priority-{priority.value}"
 
 
-def get_priority_color(priority: Priority) -> str:
-    """Get color for priority badge"""
-    colors = {
-        Priority.LOW: "#6c757d",
-        Priority.MEDIUM: "#007bff",
-        Priority.HIGH: "#fd7e14",
-        Priority.CRITICAL: "#dc3545"
+def get_priority_color(priority: Priority) -> tuple[str, str]:
+    """Get color for priority badge (text_color, bg_color)"""
+    colors: dict[Priority, tuple[str, str]] = {
+        Priority.LOW: ("#6c757d", "#f8f9fa"),
+        Priority.MEDIUM: ("#007bff", "#e7f3ff"),
+        Priority.HIGH: ("#fd7e14", "#fff3e0"),
+        Priority.CRITICAL: ("#dc3545", "#ffe7e7")
     }
-    return colors.get(priority, "#6c757d")
+    return colors.get(priority, ("#6c757d", "#f8f9fa"))
 
 
-def render_task_card(task: Task, board: Board, data: KanbanData):
-    """Render a single task card"""
+def render_task_card_html(task: Task, board: Board) -> str:
+    """Render a single task card as HTML for drag-and-drop"""
     priority_class = get_priority_class(task.priority)
-    priority_color = get_priority_color(task.priority)
+    text_color, bg_color = get_priority_color(task.priority)
     
+    tags_html = ""
+    if task.tags:
+        tags_html = " ".join([f'<span class="tag-badge">{tag}</span>' for tag in task.tags])
+    
+    agent_context_html = ""
+    if task.agent_context:
+        agent_context_html = '<div class="agent-context-badge">🤖 Agent Context</div>'
+    
+    desc_html = ""
+    if task.description:
+        desc = task.description[:100] + "..." if len(task.description) > 100 else task.description
+        desc_html = f'<div style="margin-top: 8px; font-size: 0.9rem; color: #666; line-height: 1.4;">{desc}</div>'
+    
+    return f"""
+    <div class="task-card {priority_class}" data-task-id="{task.id}" draggable="true">
+        <div style="display: flex; justify-content: space-between; align-items: start;">
+            <div style="font-weight: bold; font-size: 1rem; color: #212529; flex: 1;">
+                #{task.id}: {task.title}
+            </div>
+            <div style="font-size: 0.7rem; color: #999; margin-left: 8px;">
+                ⋮⋮
+            </div>
+        </div>
+        <div style="margin-top: 6px;">
+            <span class="priority-badge" style="background-color: {bg_color}; color: {text_color};">
+                {task.priority.value.upper()}
+            </span>
+        </div>
+        {desc_html}
+        {f'<div style="margin-top: 8px;">{tags_html}</div>' if tags_html else ""}
+        {agent_context_html}
+    </div>
+    """
+
+
+def render_task_card_native(task: Task, board: Board, data: KanbanData):
+    """Render a task card using native Streamlit components with move functionality"""
+    priority_class = get_priority_class(task.priority)
+    text_color, bg_color = get_priority_color(task.priority)
+    
+    # Card container with custom styling
     with st.container():
         st.markdown(f"""
         <div class="task-card {priority_class}">
-            <div style="font-weight: bold; font-size: 1rem; margin-bottom: 4px;">
-                #{task.id}: {task.title}
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div style="font-weight: bold; font-size: 1rem; color: #212529; flex: 1;">
+                    #{task.id}: {task.title}
+                </div>
             </div>
+            <div style="margin-top: 6px;">
+                <span class="priority-badge" style="background-color: {bg_color}; color: {text_color};">
+                    {task.priority.value.upper()}
+                </span>
+            </div>
+        </div>
         """, unsafe_allow_html=True)
         
-        # Priority badge
-        st.markdown(f"""
-            <span style="
-                background-color: {priority_color}20;
-                color: {priority_color};
-                padding: 2px 8px;
-                border-radius: 4px;
-                font-size: 0.75rem;
-                font-weight: 500;
-            ">{task.priority.value.upper()}</span>
-        """, unsafe_allow_html=True)
-        
-        # Description
         if task.description:
             desc = task.description[:100] + "..." if len(task.description) > 100 else task.description
-            st.markdown(f"<div style='margin-top: 8px; font-size: 0.9rem; color: #666;'>{desc}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size: 0.9rem; color: #666; margin: 8px 0;'>{desc}</div>", unsafe_allow_html=True)
         
-        # Tags
         if task.tags:
             tags_html = " ".join([f'<span class="tag-badge">{tag}</span>' for tag in task.tags])
-            st.markdown(f"<div style='margin-top: 8px;'>{tags_html}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div>{tags_html}</div>", unsafe_allow_html=True)
         
-        # Agent context indicator
         if task.agent_context:
-            st.markdown("""
-                <div class="agent-context-badge">🤖 Agent Context</div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("<div class='agent-context-badge'>🤖 Agent Context</div>", unsafe_allow_html=True)
         
         # Action buttons
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📖 View", key=f"view_{task.id}"):
+            if st.button("📖 View", key=f"view_{task.id}", use_container_width=True):
                 st.session_state.viewing_task = task.id
                 st.rerun()
         
         with col2:
-            # Move dropdown
+            # Quick move buttons to adjacent columns
             other_columns = [c for c in board.columns if c.id != task.column_id]
             if other_columns:
-                move_to = st.selectbox(
+                move_options = {c.name: c.id for c in other_columns}
+                selected = st.selectbox(
                     "Move to",
-                    options=[c.name for c in other_columns],
-                    key=f"move_{task.id}",
+                    options=[""] + list(move_options.keys()),
+                    key=f"move_select_{task.id}",
                     label_visibility="collapsed"
                 )
-                if st.button("➡️ Move", key=f"move_btn_{task.id}"):
-                    target_col = next(c for c in other_columns if c.name == move_to)
-                    can_move, error = board.can_add_to_column(target_col.id)
+                if selected and selected != "":
+                    target_col_id = move_options[selected]
+                    can_move, error = board.can_add_to_column(target_col_id)
                     if can_move:
-                        task.move_to(target_col.id)
+                        task.move_to(target_col_id)
                         save_data(data)
-                        st.success(f"Moved to {target_col.name}")
+                        st.success(f"Moved to {selected}")
                         st.rerun()
                     else:
                         st.error(error)
         
         with col3:
-            if st.button("🗑️ Delete", key=f"delete_{task.id}"):
+            if st.button("🗑️ Delete", key=f"delete_{task.id}", use_container_width=True):
                 st.session_state.deleting_task = task.id
                 st.rerun()
 
@@ -277,7 +460,7 @@ def render_task_details(task: Task, board: Board, data: KanbanData):
     if task.history:
         st.markdown("---")
         st.markdown("### 📜 History")
-        for entry in reversed(task.history[-10:]):  # Show last 10 entries
+        for entry in reversed(task.history[-10:]):
             ts = entry.get('timestamp', 'Unknown')
             action = entry.get('action', 'Unknown')
             reason = entry.get('reason', '')
@@ -405,7 +588,7 @@ def main():
     
     for idx, col in enumerate(sorted(board.columns, key=lambda x: x.order)):
         with columns[idx]:
-            # Column header
+            # Column header with gradient
             count = len(board.get_tasks_in_column(col.id))
             limit_text = f" ({count}/{col.limit})" if col.limit else f" ({count})"
             
@@ -417,21 +600,39 @@ def main():
             
             # WIP limit warning
             if col.limit and count >= col.limit:
-                st.warning(f"⚠️ WIP limit reached ({col.limit})")
+                st.markdown(f"""
+                    <div class="wip-warning">
+                        ⚠️ WIP limit reached ({col.limit})
+                    </div>
+                """, unsafe_allow_html=True)
             
             # Get and filter tasks for this column
             tasks = board.get_tasks_in_column(col.id)
             tasks = filter_tasks(tasks, search, priority_filter, tag_filter)
             
-            # Render tasks
+            # Render tasks with drag-and-drop support
             if tasks:
+                # Sortable list for drag-and-drop
+                task_items = []
                 for task in tasks:
-                    render_task_card(task, board, data)
+                    task_items.append({
+                        "id": task.id,
+                        "title": f"#{task.id}: {task.title}",
+                        "priority": task.priority.value,
+                        "description": task.description or "",
+                        "tags": task.tags,
+                        "has_agent_context": bool(task.agent_context)
+                    })
+                
+                # Display each task
+                for task in tasks:
+                    render_task_card_native(task, board, data)
                     st.markdown("---")
             else:
                 st.markdown("""
-                    <div style="text-align: center; color: #999; padding: 20px;">
-                        No tasks
+                    <div class="empty-column">
+                        No tasks<br>
+                        <span style="font-size: 0.8rem;">Drag tasks here or add new ones</span>
                     </div>
                 """, unsafe_allow_html=True)
 

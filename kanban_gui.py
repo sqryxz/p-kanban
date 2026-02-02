@@ -115,19 +115,23 @@ st.markdown("""
     /* Buttons - minimal */
     .stButton button {
         background: transparent !important;
-        border: 1px solid #333 !important;
-        color: #888 !important;
-        font-size: 0.7rem !important;
-        padding: 6px 12px !important;
+        border: 1px solid #2a2a2a !important;
+        color: #666 !important;
+        font-size: 0.6rem !important;
+        padding: 2px 6px !important;
         font-weight: 400 !important;
-        border-radius: 3px !important;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
+        border-radius: 2px !important;
+        letter-spacing: 0.03em;
+        text-transform: lowercase;
+        height: auto !important;
+        min-height: 20px !important;
+        line-height: 1.2 !important;
     }
     
     .stButton button:hover {
-        border-color: #555 !important;
-        color: #aaa !important;
+        border-color: #444 !important;
+        color: #888 !important;
+        background: #1a1a1a !important;
     }
     
     /* Primary action button */
@@ -256,11 +260,11 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
             </div>
         """, unsafe_allow_html=True)
         
-        # Actions row
-        c1, c2, c3 = st.columns([1, 2, 1])
+        # Actions row - compact
+        c1, c2, c3 = st.columns([1, 3, 1])
         
         with c1:
-            if st.button("view", key=f"v_{task.id}"):
+            if st.button("v", key=f"v_{task.id}"):
                 st.session_state.viewing_task = task.id
                 st.rerun()
         
@@ -284,7 +288,7 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
                         st.rerun()
         
         with c3:
-            if st.button("del", key=f"d_{task.id}"):
+            if st.button("×", key=f"d_{task.id}"):
                 board.tasks = [t for t in board.tasks if t.id != task.id]
                 save_data(data)
                 st.rerun()

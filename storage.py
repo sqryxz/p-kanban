@@ -69,7 +69,7 @@ class KanbanStorage:
         """Create default Kanban data with initial board"""
         board = Board(
             id="main",
-            name="Main Board",
+            name="pODV - progress tracker",
             columns=DEFAULT_COLUMNS
         )
         

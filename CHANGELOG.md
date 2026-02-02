@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2025-02-02
+
+### Added
+- Edit task functionality via ✎ button on each task card
+- Edit form with pre-populated task data (title, description, priority, column, tags)
+- Agent context editing within edit form
+
+### Changed
+- Task card layout: now has 4 action buttons (v, ✎, →, ×)
+- Move dropdown shortened to "→" with 3-letter column abbreviations
+- All action buttons now same compact size
+- Improved CSS for select dropdown to match button sizing
+
 ## [1.3.0] - 2025-02-02
 
 ### Added

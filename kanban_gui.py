@@ -149,7 +149,9 @@ st.markdown("""
         font-size: 0.7rem;
         border: 1px dashed #222;
         border-radius: 3px;
-        margin-top: 8px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background-color: rgba(48, 54, 61, 0.3);
     }
     
     .empty-state:hover {
@@ -181,19 +183,9 @@ st.markdown("""
         border-right: 1px solid #1a1a1a;
     }
     
-    /* Select boxes */
+    /* Select boxes - compact */
     .stSelectbox {
-        font-size: 0.75rem;
-    }
-    
-    /* Move selector */
-    .move-select {
-        opacity: 0;
-        transition: opacity 0.2s;
-    }
-    
-    .task-card:hover .move-select {
-        opacity: 1;
+        font-size: 0.6rem;
     }
     
     /* WIP indicator */
@@ -214,6 +206,20 @@ st.markdown("""
         min-height: 60vh;
         padding: 4px;
     }
+    
+    /* Compact select dropdown override */
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] {
+        font-size: 0.6rem !important;
+    }
+    
+    div[data-testid="stSelectbox"] > div > div {
+        min-height: 20px !important;
+        padding: 0px 4px !important;
+    }
+    
+    div[data-testid="stSelectbox"] span {
+        font-size: 0.6rem !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -233,13 +239,17 @@ def save_data(data: KanbanData):
 # Initialize session state
 if 'show_add' not in st.session_state:
     st.session_state.show_add = False
+if 'show_edit' not in st.session_state:
+    st.session_state.show_edit = False
+if 'editing_task_id' not in st.session_state:
+    st.session_state.editing_task_id = None
 if 'selected_column' not in st.session_state:
     st.session_state.selected_column = 'backlog'
 if 'viewing_task' not in st.session_state:
     st.session_state.viewing_task = None
 
 def render_task_card(task: Task, board: Board, data: KanbanData):
-    """Render minimal task card"""
+    """Render minimal task card with click-to-edit"""
     priority_class = f"priority-{task.priority.value}"
     
     # Build meta line
@@ -260,34 +270,40 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
             </div>
         """, unsafe_allow_html=True)
         
-        # Actions row - compact
-        c1, c2, c3 = st.columns([1, 3, 1])
+        # Actions row - all compact and same size
+        cols = st.columns([1, 1, 2, 1])
         
-        with c1:
+        with cols[0]:
             if st.button("v", key=f"v_{task.id}"):
                 st.session_state.viewing_task = task.id
                 st.rerun()
         
-        with c2:
-            # Move dropdown - shows on hover via CSS
+        with cols[1]:
+            if st.button("✎", key=f"e_{task.id}"):
+                st.session_state.show_edit = True
+                st.session_state.editing_task_id = task.id
+                st.rerun()
+        
+        with cols[2]:
+            # Compact move dropdown
             other_cols = [c for c in board.columns if c.id != task.column_id]
             if other_cols:
-                opts = ["→ move"] + [c.name.lower() for c in other_cols]
+                opts = ["→"] + [c.name.lower()[:3] for c in other_cols]
                 dest = st.selectbox(
                     "",
                     options=opts,
                     key=f"m_{task.id}",
                     label_visibility="collapsed"
                 )
-                if dest != "→ move":
-                    target = next(c for c in other_cols if c.name.lower() == dest)
+                if dest != "→":
+                    target = next(c for c in other_cols if c.name.lower()[:3] == dest)
                     ok, err = board.can_add_to_column(target.id)
                     if ok:
                         task.move_to(target.id)
                         save_data(data)
                         st.rerun()
         
-        with c3:
+        with cols[3]:
             if st.button("×", key=f"d_{task.id}"):
                 board.tasks = [t for t in board.tasks if t.id != task.id]
                 save_data(data)
@@ -311,7 +327,11 @@ def render_add_form(board: Board, data: KanbanData):
         
         tags = st.text_input("tags", placeholder="tags, separated, by, commas", label_visibility="collapsed")
         
-        submitted = st.form_submit_button("add task")
+        c_submit, c_cancel = st.columns(2)
+        with c_submit:
+            submitted = st.form_submit_button("✓ add", use_container_width=True)
+        with c_cancel:
+            cancelled = st.form_submit_button("✕ cancel", use_container_width=True)
         
         if submitted and title:
             cid = col[1]
@@ -332,9 +352,64 @@ def render_add_form(board: Board, data: KanbanData):
                 st.rerun()
             else:
                 st.error(err)
+        
+        if cancelled:
+            st.session_state.show_add = False
+            st.rerun()
+
+def render_edit_form(task: Task, board: Board, data: KanbanData):
+    """Render edit form for existing task"""
+    with st.form("edit"):
+        st.markdown(f"**edit task #{task.id}**")
+        
+        title = st.text_input("title", value=task.title, label_visibility="collapsed")
+        desc = st.text_area("desc", value=task.description or "", height=60, label_visibility="collapsed")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            pri = st.selectbox("priority", [p.value for p in Priority], index=[p.value for p in Priority].index(task.priority.value), label_visibility="collapsed")
+        with c2:
+            col_opts = [(c.name, c.id) for c in sorted(board.columns, key=lambda x: x.order)]
+            current_idx = next((i for i, (_, cid) in enumerate(col_opts) if cid == task.column_id), 0)
+            col = st.selectbox("column", options=col_opts, format_func=lambda x: x[0], index=current_idx, label_visibility="collapsed")
+        
+        tags = st.text_input("tags", value=", ".join(task.tags), label_visibility="collapsed")
+        
+        # Agent context editor
+        if task.agent_context:
+            st.markdown("<div style='font-size:0.7rem;color:#666;margin-top:8px;'>agent context</div>", unsafe_allow_html=True)
+            for key in list(task.agent_context.keys()):
+                c_key, c_val = st.columns([1, 3])
+                with c_key:
+                    st.markdown(f"<span style='font-size:0.7rem;color:#888;'>{key}</span>", unsafe_allow_html=True)
+                with c_val:
+                    new_val = st.text_input(f"ctx_{key}", value=task.agent_context[key], label_visibility="collapsed")
+                    task.agent_context[key] = new_val
+        
+        c_save, c_cancel = st.columns(2)
+        with c_save:
+            submitted = st.form_submit_button("✓ save", use_container_width=True)
+        with c_cancel:
+            cancelled = st.form_submit_button("✕ cancel", use_container_width=True)
+        
+        if submitted:
+            task.title = title
+            task.description = desc if desc else None
+            task.priority = Priority(pri)
+            task.column_id = col[1]
+            task.tags = [t.strip() for t in tags.split(",") if t.strip()]
+            task.updated_at = now_utc()
+            save_data(data)
+            st.session_state.show_edit = False
+            st.session_state.editing_task_id = None
+            st.rerun()
+        
+        if cancelled:
+            st.session_state.show_edit = False
+            st.session_state.editing_task_id = None
+            st.rerun()
 
 def render_task_detail(task: Task, board: Board, data: KanbanData):
-    """Render minimal task detail view"""
     st.markdown(f"### #{task.id}")
     st.markdown(f"**{task.title}**")
     
@@ -351,17 +426,8 @@ def render_task_detail(task: Task, board: Board, data: KanbanData):
         st.markdown("<div style='margin-top:1rem;color:#d4a030;font-size:0.75rem'>◉ agent context</div>", unsafe_allow_html=True)
         for k, v in task.agent_context.items():
             st.markdown(f"<div style='font-size:0.75rem;color:#888;margin-left:1rem'>{k}: {v}</div>", unsafe_allow_html=True)
-        
-        with st.expander("edit context"):
-            k = st.text_input("key")
-            v = st.text_input("value")
-            if st.button("update") and k:
-                task.agent_context[k] = v
-                task.updated_at = now_utc()
-                save_data(data)
-                st.rerun()
     
-    if st.button("← back"):
+    if st.button("← back", use_container_width=True):
         del st.session_state.viewing_task
         st.rerun()
 
@@ -379,35 +445,54 @@ def main():
     # Title
     st.markdown(f"<h1>◼ {board.name}</h1>", unsafe_allow_html=True)
     
-    # View task detail if selected
+    # Handle viewing task detail
     if st.session_state.viewing_task:
         task = data.get_task(st.session_state.viewing_task)
         if task:
             render_task_detail(task, board, data)
             return
+        else:
+            del st.session_state.viewing_task
     
-    # Header actions
-    c1, c2, c3 = st.columns([1, 4, 1])
-    with c1:
-        if st.button("+ new task"):
-            st.session_state.show_add = True
-            st.rerun()
-    with c3:
-        if st.button("refresh"):
-            st.cache_data.clear()
-            st.rerun()
+    # Handle editing task
+    if st.session_state.show_edit and st.session_state.editing_task_id:
+        task = data.get_task(st.session_state.editing_task_id)
+        if task:
+            st.markdown("---")
+            render_edit_form(task, board, data)
+            st.markdown("---")
+            return
+        else:
+            st.session_state.show_edit = False
+            st.session_state.editing_task_id = None
     
-    # Show add form
+    # Handle add new task
     if st.session_state.show_add:
         st.markdown("---")
         render_add_form(board, data)
-        if st.button("cancel"):
-            st.session_state.show_add = False
-            st.rerun()
         st.markdown("---")
+    
+    # Header actions
+    if not st.session_state.show_add and not st.session_state.show_edit:
+        c1, c2, c3 = st.columns([1, 4, 1])
+        with c1:
+            if st.button("+ new task"):
+                st.session_state.show_add = True
+                st.rerun()
+        with c3:
+            if st.button("refresh"):
+                st.cache_data.clear()
+                st.rerun()
     
     # Sidebar filters
     with st.sidebar:
+        st.markdown("**stats**")
+        for col in sorted(board.columns, key=lambda x: x.order):
+            count = len(board.get_tasks_in_column(col.id))
+            limit = f"/{col.limit}" if col.limit else ""
+            st.markdown(f"<div style='font-size:0.7rem;color:#666'>{col.name.lower()}: <span style='color:#888'>{count}{limit}</span></div>", unsafe_allow_html=True)
+        
+        st.markdown("---")
         st.markdown("**filters**")
         search = st.text_input("search", placeholder="...", label_visibility="collapsed")
         
@@ -426,11 +511,11 @@ def main():
         with cols[idx]:
             # Header
             count = len(board.get_tasks_in_column(col.id))
-            limit_indicator = f" <span class='wip-badge'>limit</span>" if col.limit and count >= col.limit else ""
+            limit_text = f" ({count}/{col.limit})" if col.limit else f" ({count})"
             
             st.markdown(f"""
                 <div class="column-header {col.id}">
-                    {col.name.lower()} {count}{limit_indicator}
+                    {col.name.lower()}{limit_text}
                 </div>
             """, unsafe_allow_html=True)
             

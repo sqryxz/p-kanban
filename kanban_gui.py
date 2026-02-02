@@ -183,11 +183,6 @@ st.markdown("""
         border-right: 1px solid #1a1a1a;
     }
     
-    /* Select boxes - compact */
-    .stSelectbox {
-        font-size: 0.6rem;
-    }
-    
     /* WIP indicator */
     .wip-badge {
         font-size: 0.6rem;
@@ -205,20 +200,6 @@ st.markdown("""
     .column-container {
         min-height: 60vh;
         padding: 4px;
-    }
-    
-    /* Compact select dropdown override */
-    div[data-testid="stSelectbox"] div[data-baseweb="select"] {
-        font-size: 0.6rem !important;
-    }
-    
-    div[data-testid="stSelectbox"] > div > div {
-        min-height: 20px !important;
-        padding: 0px 4px !important;
-    }
-    
-    div[data-testid="stSelectbox"] span {
-        font-size: 0.6rem !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -247,6 +228,8 @@ if 'selected_column' not in st.session_state:
     st.session_state.selected_column = 'backlog'
 if 'viewing_task' not in st.session_state:
     st.session_state.viewing_task = None
+if 'show_move_menu' not in st.session_state:
+    st.session_state.show_move_menu = None
 
 def render_task_card(task: Task, board: Board, data: KanbanData):
     """Render minimal task card with click-to-edit"""
@@ -271,7 +254,7 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
         """, unsafe_allow_html=True)
         
         # Actions row - all compact and same size
-        cols = st.columns([1, 1, 2, 1])
+        cols = st.columns([1, 1, 1, 1])
         
         with cols[0]:
             if st.button("v", key=f"v_{task.id}"):
@@ -285,29 +268,33 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
                 st.rerun()
         
         with cols[2]:
-            # Compact move dropdown
-            other_cols = [c for c in board.columns if c.id != task.column_id]
-            if other_cols:
-                opts = ["→"] + [c.name.lower()[:3] for c in other_cols]
-                dest = st.selectbox(
-                    "",
-                    options=opts,
-                    key=f"m_{task.id}",
-                    label_visibility="collapsed"
-                )
-                if dest != "→":
-                    target = next(c for c in other_cols if c.name.lower()[:3] == dest)
-                    ok, err = board.can_add_to_column(target.id)
-                    if ok:
-                        task.move_to(target.id)
-                        save_data(data)
-                        st.rerun()
+            # Move button - opens menu
+            if st.button("→", key=f"mv_{task.id}"):
+                st.session_state.show_move_menu = task.id
+                st.rerun()
         
         with cols[3]:
             if st.button("×", key=f"d_{task.id}"):
                 board.tasks = [t for t in board.tasks if t.id != task.id]
                 save_data(data)
                 st.rerun()
+        
+        # Show move menu if this task is selected
+        if st.session_state.show_move_menu == task.id:
+            st.markdown("<div style='margin:4px 0;font-size:0.65rem;color:#666'>move to:</div>", unsafe_allow_html=True)
+            other_cols = [c for c in board.columns if c.id != task.column_id]
+            move_cols = st.columns(len(other_cols))
+            for idx, col_dest in enumerate(other_cols):
+                with move_cols[idx]:
+                    if st.button(col_dest.name.lower()[:3], key=f"to_{task.id}_{col_dest.id}"):
+                        ok, err = board.can_add_to_column(col_dest.id)
+                        if ok:
+                            task.move_to(col_dest.id)
+                            st.session_state.show_move_menu = None
+                            save_data(data)
+                            st.rerun()
+                        else:
+                            st.error(err)
 
 def render_add_form(board: Board, data: KanbanData):
     """Render minimal add form"""

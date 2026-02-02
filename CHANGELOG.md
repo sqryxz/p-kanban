@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2025-02-02
+
+### Changed
+- Replace move dropdown with → button that opens inline menu
+- Clicking → shows row of destination column buttons (bac, tod, pro, tes, don)
+- All 4 action buttons (v, ✎, →, ×) now identical compact size
+- Remove unused selectbox CSS styling
+
 ## [1.4.0] - 2025-02-02
 
 ### Added

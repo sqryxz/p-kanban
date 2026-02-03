@@ -397,6 +397,33 @@ def backup(
 
 
 @app.command()
+def status(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON")
+):
+    """Show Kanban system status and data file info"""
+    storage = get_storage()
+    data = get_data()
+    
+    if json_output:
+        output = {
+            "data_path": str(storage.data_path),
+            "data_file_exists": storage.data_path.exists(),
+            "boards_count": len(data.boards),
+            "default_board": data.default_board,
+            "total_tasks": sum(len(b.tasks) for b in data.boards)
+        }
+        print(json.dumps(output, indent=2))
+        return
+    
+    console.print(f"[bold]Kanban Status[/bold]")
+    console.print(f"Data file: {storage.data_path}")
+    console.print(f"File exists: {'[green]Yes[/green]' if storage.data_path.exists() else '[red]No[/red]'}")
+    console.print(f"Boards: {len(data.boards)}")
+    console.print(f"Default board: {data.default_board}")
+    console.print(f"Total tasks: {sum(len(b.tasks) for b in data.boards)}")
+
+
+@app.command()
 def create_board(
     name: str = typer.Argument(..., help="Board name"),
     set_default: bool = typer.Option(True, "--default/--no-default", help="Set as default board")

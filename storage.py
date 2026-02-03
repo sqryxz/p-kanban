@@ -38,7 +38,18 @@ class KanbanStorage:
             with open(self.data_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             return KanbanData.model_validate(data)
-        except (json.JSONDecodeError, Exception):
+        except json.JSONDecodeError as e:
+            # Backup corrupted file and create fresh data
+            backup_path = self.data_path.with_suffix('.json.corrupted')
+            try:
+                shutil.copy2(self.data_path, backup_path)
+                print(f"Warning: Data file corrupted. Backed up to: {backup_path}")
+            except Exception:
+                pass
+            return self._create_default_data()
+        except Exception as e:
+            # Log validation errors but don't silently overwrite
+            print(f"Warning: Error loading data ({type(e).__name__}: {e}). Creating fresh data.")
             return self._create_default_data()
     
     def save(self, data: KanbanData) -> None:

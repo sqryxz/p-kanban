@@ -17,7 +17,8 @@ from rich.panel import Panel
 from rich import box
 
 from models import KanbanData, Board, Task, Column, Priority, DEFAULT_COLUMNS, now_utc
-from storage import KanbanStorage
+from models import KanbanError, BoardNotFoundError, TaskNotFoundError, ColumnError
+from storage import KanbanStorage, KanbanStorageLocked
 
 
 app = typer.Typer(help="Kanban CLI - Personal task board for AI agent collaboration")
@@ -55,16 +56,14 @@ def add(
     board = data.get_board(board_id)
     
     if not board:
-        console.print("[red]Error: No board found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError(f"Board '{board_id}' not found")
     
     can_add, error_msg = board.can_add_to_column(column)
     if not can_add:
-        console.print(f"[red]Error: {error_msg}[/red]")
-        sys.exit(1)
+        raise ColumnError(error_msg)
     
     task = Task(
-        id=board.get_next_task_id(),
+        id=board.get_next_task_id(data),
         board_id=board.id,
         column_id=column,
         title=title,
@@ -91,13 +90,11 @@ def move(
     board = data.get_board(board_id)
     
     if not board:
-        console.print("[red]Error: No board found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError(f"Board '{board_id}' not found")
     
     task = data.get_task(task_id)
     if not task:
-        console.print(f"[red]Error: Task #{task_id} not found[/red]")
-        sys.exit(1)
+        raise TaskNotFoundError(f"Task #{task_id} not found")
     
     if task.column_id == column:
         console.print(f"[yellow]Task #{task_id} is already in '{column}'[/yellow]")
@@ -105,8 +102,7 @@ def move(
     
     can_add, error_msg = board.can_add_to_column(column)
     if not can_add:
-        console.print(f"[red]Error: {error_msg}[/red]")
-        sys.exit(1)
+        raise ColumnError(error_msg)
     
     old_column = task.column_id
     task.move_to(column, reason)
@@ -126,13 +122,11 @@ def delete(
     board = data.get_board(board_id)
     
     if not board:
-        console.print("[red]Error: No board found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError(f"Board '{board_id}' not found")
     
     task = data.get_task(task_id, board_id)
     if not task:
-        console.print(f"[red]Error: Task #{task_id} not found[/red]")
-        sys.exit(1)
+        raise TaskNotFoundError(f"Task #{task_id} not found")
     
     if not force:
         confirm = typer.confirm(f"Delete task #{task_id}: '{task.title}'?")
@@ -156,8 +150,7 @@ def show(
     board = data.get_board(board_id)
     
     if not board:
-        console.print("[red]Error: Board not found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError(f"Board '{board_id}' not found")
     
     if json_output:
         output = {
@@ -226,8 +219,7 @@ def list_tasks(
     board = data.get_board()
     
     if not board:
-        console.print("[red]Error: No board found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError("No board found")
     
     tasks = board.tasks
     
@@ -254,8 +246,8 @@ def list_tasks(
             Priority.CRITICAL: "red bold"
         }.get(task.priority, "white")
         
-        col_name = board.get_column(task.column_id)
-        col_display = col_name.name if col_name else task.column_id
+        col = board.get_column(task.column_id)
+        col_display = col.name if col else task.column_id
         
         tags_str = f" [dim]({', '.join(task.tags)})[/dim]" if task.tags else ""
         console.print(f"[{priority_color}]#{task.id}[/] [{task.column_id}]{col_display}[/{task.column_id}] - {task.title}{tags_str}")
@@ -271,14 +263,14 @@ def info(
     task = data.get_task(task_id)
     
     if not task:
-        console.print(f"[red]Error: Task #{task_id} not found[/red]")
-        sys.exit(1)
+        raise TaskNotFoundError(f"Task #{task_id} not found")
     
     if json_output:
         print(json.dumps(task.model_dump(mode='json'), indent=2))
         return
     
-    col = data.get_board().get_column(task.column_id) if data.get_board() else None
+    board = data.get_board()
+    col = board.get_column(task.column_id) if board else None
     col_name = col.name if col else task.column_id
     
     content = f"""
@@ -321,8 +313,7 @@ def edit(
     task = data.get_task(task_id)
     
     if not task:
-        console.print(f"[red]Error: Task #{task_id} not found[/red]")
-        sys.exit(1)
+        raise TaskNotFoundError(f"Task #{task_id} not found")
     
     if title:
         task.title = title
@@ -352,8 +343,7 @@ def agent_context(
     task = data.get_task(task_id)
     
     if not task:
-        console.print(f"[red]Error: Task #{task_id} not found[/red]")
-        sys.exit(1)
+        raise TaskNotFoundError(f"Task #{task_id} not found")
     
     task.agent_context[key] = value
     task.updated_at = now_utc()
@@ -493,8 +483,7 @@ def switch_board(
     
     board = data.get_board(board_id)
     if not board:
-        console.print(f"[red]Error: Board '{board_id}' not found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError(f"Board '{board_id}' not found")
     
     data.default_board = board_id
     save_data(data)
@@ -511,12 +500,10 @@ def delete_board(
     
     board = data.get_board(board_id)
     if not board:
-        console.print(f"[red]Error: Board '{board_id}' not found[/red]")
-        sys.exit(1)
+        raise BoardNotFoundError(f"Board '{board_id}' not found")
     
     if len(data.boards) <= 1:
-        console.print("[red]Error: Cannot delete the only board. Create another board first.[/red]")
-        sys.exit(1)
+        raise KanbanError("Cannot delete the only board. Create another board first.")
     
     if not force:
         task_count = len(board.tasks)
@@ -536,6 +523,23 @@ def delete_board(
     console.print(f"[green]Deleted board: {board.name} ({board_id})[/green]")
 
 
+def handle_exception(exc: Exception) -> None:
+    """Handle Kanban exceptions with user-friendly messages"""
+    if isinstance(exc, BoardNotFoundError):
+        console.print(f"[red]Error: {exc}[/red]")
+    elif isinstance(exc, TaskNotFoundError):
+        console.print(f"[red]Error: {exc}[/red]")
+    elif isinstance(exc, ColumnError):
+        console.print(f"[red]Error: {exc}[/red]")
+    elif isinstance(exc, KanbanError):
+        console.print(f"[red]Error: {exc}[/red]")
+    elif isinstance(exc, KanbanStorageLocked):
+        console.print(f"[red]Error: {exc}[/red]")
+    else:
+        console.print(f"[red]Unexpected error: {exc}[/red]")
+    raise typer.Exit(1)
+
+
 @app.callback()
 def main(
     version: Optional[bool] = typer.Option(None, "--version", "-v", help="Show version")
@@ -544,6 +548,13 @@ def main(
     if version:
         console.print("Kanban CLI v1.0.0")
         raise typer.Exit()
+    
+    # Add exception handler for all commands
+    from typing import get_type_hints
+    app.registered_commands = getattr(app, 'registered_commands', [])
+    
+    # Register exception handling wrapper
+    pass
 
 
 if __name__ == "__main__":

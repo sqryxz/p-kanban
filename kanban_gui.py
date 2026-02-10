@@ -106,6 +106,34 @@ st.markdown("""
         border-radius: 2px;
         color: #666;
     }
+
+    /* Task actions list styling */
+    .task-actions-card {
+        background-color: #141414;
+        border: 1px solid #222;
+        border-radius: 3px;
+        padding: 10px 12px;
+        margin: 6px 0;
+    }
+
+    .task-actions-title {
+        font-weight: 400;
+        color: #ccc;
+        margin-bottom: 6px;
+        font-size: 0.8rem;
+    }
+
+    .task-actions-meta {
+        font-size: 0.65rem;
+        color: #555;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .task-actions-buttons {
+        margin-top: 4px;
+    }
     
     /* Agent indicator */
     .agent-indicator {
@@ -238,8 +266,163 @@ st.markdown("""
 
 from models import KanbanData, Board, Task, Column, Priority, now_utc
 from storage import KanbanStorage
+from streamlit_sortables import sort_items
 
-@st.cache_data(ttl=1)
+
+# Custom CSS for drag-and-drop visual feedback (in-component)
+DRAG_DROP_CSS = """
+.sortable-component {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+/* Drop zone highlighting */
+.sortable-container.droppable-hover {
+    background-color: rgba(240, 160, 48, 0.1) !important;
+    border: 2px dashed #f0a030 !important;
+}
+
+/* Dragging item styling */
+.sortable-item.dragging {
+    background-color: #2a2a2a !important;
+    border: 2px solid #f0a030 !important;
+    opacity: 0.9 !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Container styling to match dark theme */
+.sortable-container {
+    background-color: #0a0a0a !important;
+    border: 1px solid #222 !important;
+    border-radius: 4px !important;
+    min-width: 200px !important;
+    flex: 1 1 0 !important;
+}
+
+.sortable-container-header {
+    background-color: #141414 !important;
+    border-bottom: 1px solid #222 !important;
+    padding: 8px 12px !important;
+    font-family: 'Inter', sans-serif !important;
+}
+
+.sortable-container-body {
+    background-color: #0a0a0a !important;
+    padding: 4px !important;
+    min-height: 100px !important;
+}
+
+    .sortable-item {
+    background-color: #141414 !important;
+    border: 1px solid #222 !important;
+    border-radius: 3px !important;
+    padding: 10px 12px !important;
+    margin: 6px 0 !important;
+    font-family: 'Inter', sans-serif !important;
+    color: #ccc !important;
+    font-size: 0.8rem !important;
+    transition: all 0.15s ease !important;
+    cursor: grab !important;
+}
+
+    .sortable-item:hover {
+    border-color: #444 !important;
+    background-color: #1a1a1a !important;
+}
+
+.sortable-item:active {
+    cursor: grabbing !important;
+}
+"""
+
+
+def build_sortable_items(board: Board, search: str = "", tag_filter: str = "all") -> list:
+    """Build items structure for streamlit-sortables from board tasks"""
+    # Ensure we have strings, not None
+    search = search or ""
+    tag_filter = tag_filter or "all"
+    items = []
+    
+    for col in sorted(board.columns, key=lambda x: x.order):
+        # Filter tasks for this column
+        tasks = board.get_tasks_in_column(col.id)
+        
+        if search:
+            tasks = [t for t in tasks if search.lower() in t.title.lower()]
+        if tag_filter != "all":
+            tasks = [t for t in tasks if tag_filter in t.tags]
+        
+        # Build task items with display info
+        task_items = []
+        for task in tasks:
+            item_str = f"#{task.id} {task.title}"
+            task_items.append(item_str)
+        
+        items.append({
+            'header': f"{col.name.lower()} ({len(tasks)})",
+            'items': task_items,
+            'column_id': col.id  # Track which column this is
+        })
+    
+    return items
+
+
+def _parse_task_id(item_str: str) -> Optional[int]:
+    if not item_str:
+        return None
+    if not item_str.startswith("#"):
+        return None
+    token = item_str.split()[0].lstrip("#")
+    try:
+        return int(token)
+    except ValueError:
+        return None
+
+
+def process_sortable_movement(original_items: list, sorted_items: list, board: Board, data: KanbanData) -> tuple:
+    """Process drag-and-drop movements and update task positions
+    
+    Returns: (moved_tasks_count, updated_board)
+    """
+    moved_count = 0
+    
+    if not sorted_items or len(original_items) != len(sorted_items):
+        return moved_count, board
+    
+    # Build original column mapping
+    original_mapping = {}  # task_id -> column_id
+    for container in original_items:
+        column_id = container.get('column_id')
+        for item in container.get('items', []):
+            task_id = _parse_task_id(item)
+            if task_id is not None:
+                original_mapping[task_id] = column_id
+    
+    # Check for movements in sorted result
+    for container in sorted_items:
+        column_id = container.get('column_id')
+        for item in container.get('items', []):
+            task_id = _parse_task_id(item)
+            if task_id is None:
+                continue
+            original_column = original_mapping.get(task_id)
+            
+            # Task moved to a different column
+            if original_column and original_column != column_id:
+                task = data.get_task(task_id)
+                if task:
+                    ok, err = board.can_add_to_column(column_id)
+                    if ok:
+                        task.move_to(column_id)
+                        moved_count += 1
+                    else:
+                        # Log warning but don't fail
+                        pass
+    
+    return moved_count, board
+
+@st.cache_data
 def load_data() -> KanbanData:
     storage = KanbanStorage()
     return storage.load()
@@ -266,6 +449,10 @@ if 'viewing_task' not in st.session_state:
     st.session_state.viewing_task = None
 if 'show_move_menu' not in st.session_state:
     st.session_state.show_move_menu = None
+if 'sortable_key' not in st.session_state:
+    st.session_state.sortable_key = "kanban_sortable"
+if 'delete_confirm' not in st.session_state:
+    st.session_state.delete_confirm = None  # Task ID pending confirmation
 
 def render_task_card(task: Task, board: Board, data: KanbanData):
     """Render minimal task card with click-to-edit"""
@@ -311,9 +498,23 @@ def render_task_card(task: Task, board: Board, data: KanbanData):
         
         with cols[3]:
             if st.button("×", key=f"d_{task.id}"):
-                board.tasks = [t for t in board.tasks if t.id != task.id]
-                save_data(data)
+                st.session_state.delete_confirm = task.id
                 st.rerun()
+        
+        # Show delete confirmation dialog
+        if st.session_state.delete_confirm == task.id:
+            c_confirm, c_cancel = st.columns(2)
+            with c_confirm:
+                if st.button("✓ delete", key=f"del_yes_{task.id}", type="primary"):
+                    board.tasks = [t for t in board.tasks if t.id != task.id]
+                    save_data(data)
+                    st.session_state.delete_confirm = None
+                    st.rerun()
+            with c_cancel:
+                if st.button("✕ cancel", key=f"del_no_{task.id}"):
+                    st.session_state.delete_confirm = None
+                    st.rerun()
+            st.markdown(f"<div style='color:#f03030;font-size:0.7rem'>delete '{task.title}'?</div>", unsafe_allow_html=True)
         
         # Show move menu if this task is selected
         if st.session_state.show_move_menu == task.id:
@@ -365,7 +566,7 @@ def render_add_form(board: Board, data: KanbanData):
             ok, err = board.can_add_to_column(cid)
             if ok:
                 task = Task(
-                    id=board.get_next_task_id(),
+                    id=board.get_next_task_id(data),
                     board_id=board.id,
                     column_id=cid,
                     title=title,
@@ -498,6 +699,56 @@ def render_task_detail(task: Task, board: Board, data: KanbanData):
         del st.session_state.viewing_task
         st.rerun()
 
+
+def render_task_actions_list(board: Board, data: KanbanData):
+    cols = st.columns(len(board.columns))
+    for idx, col in enumerate(sorted(board.columns, key=lambda x: x.order)):
+        tasks = board.get_tasks_in_column(col.id)
+        with cols[idx]:
+            for task in tasks:
+                meta_parts = []
+                if task.tags:
+                    meta_parts.extend([f'<span class="tag">{t}</span>' for t in task.tags[:2]])
+                if task.agent_context:
+                    meta_parts.append('<span class="agent-indicator">◉</span>')
+                meta_html = ' '.join(meta_parts) if meta_parts else '<span style="color:#333">—</span>'
+
+                st.markdown(f"""
+                    <div class="task-actions-card">
+                        <div class="task-actions-title">#{task.id} {task.title}</div>
+                        <div class="task-actions-meta">{meta_html}</div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                c_view, c_edit, c_delete = st.columns([1, 1, 1])
+                with c_view:
+                    if st.button("v", key=f"act_view_{task.id}", use_container_width=True):
+                        st.session_state.viewing_task = task.id
+                        st.rerun()
+                with c_edit:
+                    if st.button("✎", key=f"act_edit_{task.id}", use_container_width=True):
+                        st.session_state.show_edit = True
+                        st.session_state.editing_task_id = task.id
+                        st.rerun()
+                with c_delete:
+                    if st.button("×", key=f"act_del_{task.id}"):
+                        st.session_state.delete_confirm = task.id
+                        st.rerun()
+                
+                # Show delete confirmation dialog
+                if st.session_state.delete_confirm == task.id:
+                    c_del_yes, c_del_no = st.columns([1, 1])
+                    with c_del_yes:
+                        if st.button("✓", key=f"act_del_yes_{task.id}", type="primary"):
+                            board.tasks = [t for t in board.tasks if t.id != task.id]
+                            save_data(data)
+                            st.session_state.delete_confirm = None
+                            st.rerun()
+                    with c_del_no:
+                        if st.button("✕", key=f"act_del_no_{task.id}"):
+                            st.session_state.delete_confirm = None
+                            st.rerun()
+
 def ensure_five_columns(board: Board):
     """Ensure board has all 5 columns with correct order"""
     expected_columns = {
@@ -552,9 +803,6 @@ def main():
     # Ensure board has all 5 columns with correct order, save if changed
     if ensure_five_columns(board):
         save_data(data)
-    
-    # Update board name for this session
-    board.name = "pODV - progress tracker"
     
     # Title
     st.markdown(f"<h1>◼ {board.name}</h1>", unsafe_allow_html=True)
@@ -651,54 +899,50 @@ def main():
         
         st.markdown("---")
         st.markdown("**filters**")
-        search = st.text_input("search", placeholder="...", label_visibility="collapsed")
+    
+    # Get sidebar filter values (outside sidebar context)
+    search = st.session_state.get('search_filter', '')
+    tag_filter = st.session_state.get('tag_filter', 'all')
+    
+    with st.sidebar:
+        # We need to get the actual values from the sidebar inputs
+        # Re-create inputs to capture values
+        search = st.text_input("search", value=search, placeholder="...", label_visibility="collapsed")
+        st.session_state.search_filter = search
         
         all_tags = set()
         for t in board.tasks:
             all_tags.update(t.tags)
         if all_tags:
-            tag_filter = st.selectbox("tag", ["all"] + sorted(list(all_tags)), label_visibility="collapsed")
+            tag_filter = st.selectbox("tag", ["all"] + sorted(list(all_tags)), index=0 if tag_filter == "all" else sorted(list(all_tags)).index(tag_filter) + 1 if tag_filter in all_tags else 0, label_visibility="collapsed")
         else:
             tag_filter = "all"
+        st.session_state.tag_filter = tag_filter
     
-    # Kanban columns - 5 columns
-    cols = st.columns(5)
+    # Build sortable items from current board state
+    original_items = build_sortable_items(board, str(search) if search else "", str(tag_filter) if tag_filter else "all")
     
-    for idx, col in enumerate(sorted(board.columns, key=lambda x: x.order)):
-        with cols[idx]:
-            # Header
-            count = len(board.get_tasks_in_column(col.id))
-            limit_text = f" ({count}/{col.limit})" if col.limit else f" ({count})"
-            
-            st.markdown(f"""
-                <div class="column-header {col.id}">
-                    {col.name.lower()}{limit_text}
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Filter tasks
-            tasks = board.get_tasks_in_column(col.id)
-            if search:
-                tasks = [t for t in tasks if search.lower() in t.title.lower()]
-            if tag_filter != "all":
-                tasks = [t for t in tasks if tag_filter in t.tags]
-            
-            # Render tasks
-            if tasks:
-                for task in tasks:
-                    render_task_card(task, board, data)
-            else:
-                # Empty state
-                if st.button(f"+ add", key=f"e_{col.id}"):
-                    st.session_state.selected_column = col.id
-                    st.session_state.show_add = True
-                    st.rerun()
-                
-                st.markdown("""
-                    <div class="empty-state">
-                        empty
-                    </div>
-                """, unsafe_allow_html=True)
+    # Render draggable columns
+    sorted_items = sort_items(
+        original_items,
+        multi_containers=True,
+        direction='horizontal',
+        custom_style=DRAG_DROP_CSS,
+        key=st.session_state.sortable_key
+    )
+    
+    # Process any drag-and-drop movements
+    if sorted_items != original_items:
+        moved_count, board = process_sortable_movement(original_items, sorted_items, board, data)
+        if moved_count > 0:
+            save_data(data)
+            st.cache_data.clear()
+        # Increment key to force re-render with fresh state
+            st.session_state.sortable_key = f"kanban_sortable_{hash(str(sorted_items))}"
+            st.rerun()
+
+    # Actions list for view/edit/delete
+    render_task_actions_list(board, data)
 
 if __name__ == "__main__":
     main()

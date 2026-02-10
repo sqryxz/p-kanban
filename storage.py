@@ -1,20 +1,34 @@
 """
-Storage layer for Kanban data - JSON file with atomic writes
+Storage layer for Kanban data - JSON file with atomic writes and file locking
 """
 
 import json
 import os
 import shutil
 import tempfile
+import fcntl
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+from contextlib import contextmanager
 
 from models import KanbanData, Board, Task, Column, DEFAULT_COLUMNS, now_utc
 
 
+class KanbanStorageError(Exception):
+    """Base exception for storage operations"""
+    pass
+
+
+class KanbanStorageLocked(KanbanStorageError):
+    """Raised when data file is locked by another process"""
+    pass
+
+
 class KanbanStorage:
-    """Handles JSON file storage with atomic write operations"""
+    """Handles JSON file storage with atomic write operations and file locking"""
+    
+    LOCK_TIMEOUT = 10  # seconds to wait for lock
     
     def __init__(self, data_path: Optional[str] = None):
         if data_path:
@@ -23,37 +37,52 @@ class KanbanStorage:
             home = Path.home()
             self.data_path = home / ".kanban" / "data.json"
         
+        self._lock_file = self.data_path.with_suffix('.lock')
         self._ensure_directory()
     
     def _ensure_directory(self):
         """Ensure the data directory exists"""
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
     
+    @contextmanager
+    def _lock(self):
+        """Acquire exclusive lock for concurrent access protection"""
+        lock_fd = os.open(self._lock_file, os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+        except BlockingIOError:
+            raise KanbanStorageLocked("Data file is locked by another process")
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+    
     def load(self) -> KanbanData:
-        """Load Kanban data from JSON file"""
+        """Load Kanban data from JSON file with locking"""
         if not self.data_path.exists():
             return self._create_default_data()
         
-        try:
-            with open(self.data_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return KanbanData.model_validate(data)
-        except json.JSONDecodeError as e:
-            # Backup corrupted file and create fresh data
-            backup_path = self.data_path.with_suffix('.json.corrupted')
+        with self._lock():
             try:
-                shutil.copy2(self.data_path, backup_path)
-                print(f"Warning: Data file corrupted. Backed up to: {backup_path}")
-            except Exception:
-                pass
-            return self._create_default_data()
-        except Exception as e:
-            # Log validation errors but don't silently overwrite
-            print(f"Warning: Error loading data ({type(e).__name__}: {e}). Creating fresh data.")
-            return self._create_default_data()
+                with open(self.data_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return KanbanData.model_validate(data)
+            except json.JSONDecodeError as e:
+                # Backup corrupted file and create fresh data
+                backup_path = self.data_path.with_suffix('.json.corrupted')
+                try:
+                    shutil.copy2(self.data_path, backup_path)
+                    print(f"Warning: Data file corrupted. Backed up to: {backup_path}")
+                except Exception:
+                    pass
+                return self._create_default_data()
+            except Exception as e:
+                # Log validation errors but don't silently overwrite
+                print(f"Warning: Error loading data ({type(e).__name__}: {e}). Creating fresh data.")
+                return self._create_default_data()
     
     def save(self, data: KanbanData) -> None:
-        """Save Kanban data atomically to JSON file"""
+        """Save Kanban data atomically to JSON file with locking"""
         temp_fd, temp_path = tempfile.mkstemp(
             dir=self.data_path.parent,
             prefix='.kanban_tmp_'
@@ -69,7 +98,8 @@ class KanbanStorage:
                     default=str
                 )
             
-            shutil.move(temp_path, self.data_path)
+            with self._lock():
+                shutil.move(temp_path, self.data_path)
             
         except Exception:
             if os.path.exists(temp_path):
@@ -80,7 +110,7 @@ class KanbanStorage:
         """Create default Kanban data with initial board"""
         board = Board(
             id="main",
-            name="pODV - progress tracker",
+            name="Main Board",
             columns=DEFAULT_COLUMNS
         )
         

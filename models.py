@@ -2,15 +2,40 @@
 Kanban Tracker - Personal Kanban Board for AI Agent Collaboration
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from enum import Enum
+
+if TYPE_CHECKING:
+    from models import KanbanData
 
 
 def now_utc() -> datetime:
     """Return current UTC time with timezone info"""
     return datetime.now(timezone.utc)
+
+
+class KanbanError(Exception):
+    """Base exception for Kanban errors"""
+    pass
+
+
+class BoardNotFoundError(KanbanError):
+    """Raised when a board is not found"""
+    pass
+
+
+class TaskNotFoundError(KanbanError):
+    """Raised when a task is not found"""
+    pass
+
+
+class ColumnError(KanbanError):
+    """Raised when a column operation fails (e.g., WIP limit)"""
+    pass
 
 
 class Priority(str, Enum):
@@ -75,11 +100,9 @@ class Board(BaseModel):
     created_at: datetime = Field(default_factory=now_utc)
     updated_at: datetime = Field(default_factory=now_utc)
 
-    def get_next_task_id(self) -> int:
-        """Generate next available task ID"""
-        if not self.tasks:
-            return 1
-        return max(t.id for t in self.tasks) + 1
+    def get_next_task_id(self, data: "KanbanData") -> int:
+        """Generate next available task ID using global monotonic counter"""
+        return data.allocate_task_id()
 
     def get_tasks_in_column(self, column_id: str) -> List[Task]:
         """Get all tasks in a specific column"""
@@ -113,6 +136,7 @@ class KanbanData(BaseModel):
     version: str = Field(default="1.0", description="Data format version")
     boards: List[Board] = Field(default_factory=list)
     default_board: str = Field(default="main", description="Default board ID")
+    next_task_id: int = Field(default=1, description="Monotonic counter for task IDs")
     
     def get_board(self, board_id: Optional[str] = None) -> Optional[Board]:
         """Get board by ID (or default if not specified)"""
@@ -131,6 +155,12 @@ class KanbanData(BaseModel):
             if task.id == task_id:
                 return task
         return None
+    
+    def allocate_task_id(self) -> int:
+        """Allocate and return the next monotonic task ID"""
+        task_id = self.next_task_id
+        self.next_task_id += 1
+        return task_id
 
 
 DEFAULT_COLUMNS = [
